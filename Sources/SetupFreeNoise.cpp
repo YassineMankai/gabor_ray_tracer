@@ -1,0 +1,132 @@
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+#include "SetupFreeNoise.h"
+#include "Texture2Dnoise.h"
+
+int pseudoRandom(int seed)
+{
+    const int a = 16807; // 7^5
+    const int m = 2147483647; // 2^31 - 1
+    seed = int(unsigned(seed * a) % m);
+    return seed;
+}
+
+float SetupFreeNoise::cell(int i, int j, int k, const glm::vec3 &pos, const glm::vec3 &normal) const
+{
+    unsigned s = m_random_offset + i + j * 400 + 400 * 400 * k;
+    if (s == 0) s = 1;
+    prng gen;
+    gen.seed(s);
+    double number_of_impulses_per_cell = m_impulse_density * m_kernel_radius * m_kernel_radius * m_kernel_radius;
+    unsigned number_of_impulses = gen.poisson(number_of_impulses_per_cell);
+    float noise = 0.0;
+    glm::vec3 n = glm::normalize(normal);
+    for (int i = 0; i < number_of_impulses; ++i) {  
+        glm::vec3 samplePos = glm::vec3(gen.uniform(0, 1), gen.uniform(0, 1), gen.uniform(0, 1));
+        float signedDistanceToPlan = glm::dot(samplePos - pos, n);
+        glm::vec3 projection = samplePos - pos - signedDistanceToPlan * n;
+        float projNormSquared = glm::dot(projection, projection);
+        if (glm::abs(signedDistanceToPlan) < 1.0f && projNormSquared < 1.0f) { // inside cylindre
+            glm::vec3 frame;
+            if (m_isIsotropic)
+                frame = glm::normalize(glm::vec3(gen.uniform(-1, 1), gen.uniform(-1, 1), gen.uniform(-1, 1)));
+            else
+                frame = glm::normalize(glm::vec3(1.0, 0.2, 0.7));
+            glm::vec3 tangent = glm::cross(frame, n);
+            glm::vec3 biTangent = glm::cross(n, tangent);
+            float x_i_x  = glm::dot(projection, tangent);
+            float y_i_y  = glm::dot(projection, biTangent);
+            float w_i = 2 * (0.5f - abs(signedDistanceToPlan));
+            if (m_isIsotropic)
+                noise += w_i * gabor(m_magnitude, m_kernel_freq_width, m_frequency, gen.uniform(0, 2.f * 3.14f) , x_i_x * m_kernel_radius, y_i_y * m_kernel_radius); // isotropic
+            else
+                noise += w_i * gabor(m_magnitude, m_kernel_freq_width, m_frequency, m_orientation , x_i_x * m_kernel_radius, y_i_y * m_kernel_radius); // anisotropic  
+        }
+    } 
+    
+    return noise;
+}
+
+float SetupFreeNoise::noiseFloat(const glm::vec3& pos, const glm::vec3& normal) {
+    glm::vec3 fracPos = 180.0f * pos / m_kernel_radius;
+    int i = int(fracPos.x), j = int(fracPos.y), k = int(fracPos.z);
+    fracPos = fracPos - floor(fracPos);
+    float value = 0.0;
+    for (int di = -1; di <= +1; ++di) {
+        for (int dj = -1; dj <= +1; ++dj) {
+            for (int dk = -1; dk <= +1; ++dk) {
+                value += cell(i + di, j + dj, k + dk, fracPos - glm::vec3(di, dj, dk), normal);
+            }
+        }
+    }
+    return std::max(0.00f, std::min(1.01f, 0.4f + value / (60 * variance())));
+}
+
+glm::vec3 SetupFreeNoise::noiseColor(const glm::vec3& pos, const glm::vec3& normal, const std::vector<glm::vec3>& colorMap) {
+    glm::vec3 fracPos = 180.0f * pos / m_kernel_radius;
+    int i = int(fracPos.x), j = int(fracPos.y), k = int(fracPos.z);
+    fracPos = fracPos - floor(fracPos);
+    float value = 0.0;
+    for (int di = -1; di <= +1; ++di) {
+        for (int dj = -1; dj <= +1; ++dj) {
+            for (int dk = -1; dk <= +1; ++dk) {
+                value += cell(i + di, j + dj, k + dk, fracPos - glm::vec3(di, dj, dk), normal);
+            }
+        }
+    }
+    float noiseEval = std::max(0.00f, std::min(1.01f, 0.4f + value / (60 * variance()))) * colorMap.size();
+    int interval = static_cast<int>(noiseEval);
+    float frac = noiseEval - interval;
+    glm::vec3 color;
+    if (interval >= colorMap.size() - 1)
+        color = colorMap[colorMap.size() - 1];
+    else
+        color = (1 - frac) * colorMap[interval] + frac * colorMap[interval + 1];
+    return color;
+}
+
+float SetupFreeNoise::variance() const
+{
+    float integral_gabor_filter_squared = ((m_magnitude * m_magnitude) / (4.0 * m_kernel_freq_width * m_kernel_freq_width)) * (1.0 + std::exp(-(2.0 * M_PI * m_frequency * m_frequency) / (m_kernel_freq_width * m_kernel_freq_width * m_kernel_freq_width)));
+    return m_impulse_density * (1.0 / 3.0) * integral_gabor_filter_squared;
+}
+
+void SurfaceNoiseMaterial::addColor(const std::vector<glm::vec3>& colors) {
+    m_colorMap.insert(m_colorMap.end(), colors.begin(), colors.end());
+}
+
+void SurfaceNoiseMaterial::setGen(std::shared_ptr<SetupFreeNoise> gen)
+{
+    m_generator = gen;
+}
+
+glm::vec3& SurfaceNoiseMaterial::albedo(const glm::vec3& pos, const glm::vec3& normal) {
+    if (noiseActive[0]) {
+        m_albedo = m_generator->noiseColor(pos, normal, m_colorMap);
+    }
+    return m_albedo;
+}
+
+float& SurfaceNoiseMaterial::roughness(const glm::vec3& pos, const glm::vec3& normal) {
+    if (noiseActive[1]) {
+        m_roughness = 0.05 + 1.1* m_generator->noiseFloat(pos, normal);
+    }
+    return m_roughness;
+}
+
+float& SurfaceNoiseMaterial::metallicness(const glm::vec3& pos, const glm::vec3& normal) {
+    if (noiseActive[2]) {
+        m_metallicness = 0.05 + 0.7 * m_generator->noiseFloat(pos, normal);
+    }
+    return m_metallicness;
+}
+
+void SurfaceNoiseMaterial::setmask(bool activateAlbedoNoise, bool activateRoughnessNoise, bool activateMetalicNoise) {
+    noiseActive[0] = activateAlbedoNoise;
+    noiseActive[1] = activateRoughnessNoise;
+    noiseActive[2] = activateMetalicNoise;
+}
