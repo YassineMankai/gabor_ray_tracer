@@ -90,6 +90,8 @@ public:
 		m_materials.clear();
 		m_textures.clear();
 		m_lights.clear();
+		m_triangles.clear();
+		m_bvh = nullptr;
 	}
 
 private:

@@ -53,6 +53,9 @@ static std::shared_ptr<Scene> scenePtr;
 static std::shared_ptr<Rasterizer> rasterizerPtr;
 static std::shared_ptr<RayTracer> rayTracerPtr;
 
+int current_scene = 1;
+bool swap_scene = false;
+
 // Camera control variables
 static glm::vec3 center = glm::vec3 (0.0); // To update based on the mesh position
 static float meshScale = 1.0; // To update based on the mesh size, so that navigation runs at scale
@@ -91,6 +94,7 @@ void printHelp () {
    			  + "\t* TAB: switch between rasterization and ray tracing display\n"
    			  + "\t* B: activate BVH\n"
    			  + "\t* N: deactivate BVH\n"
+   			  + "\t* S: swap scene\n"
    			  + "\t* SPACE: execute ray tracing\n");
 }
 
@@ -125,6 +129,9 @@ void keyCallback (GLFWwindow * windowPtr, int key, int scancode, int action, int
 			Console::print("deactivate BVH");
 		} else if (action == GLFW_PRESS && key == GLFW_KEY_SPACE) {
 			raytrace ();
+		}
+		else if (action == GLFW_PRESS && key == GLFW_KEY_S) {
+			swap_scene = true;
 		}
 		else {
 			printHelp ();
@@ -218,6 +225,10 @@ void initGLFW () {
 }
 
 void initScene1 () {
+	Console::print("init scene 1");
+	
+	scenePtr->clear();
+	
 	Console::print("Scene1 : albedo textures generated using noise (planar uv for walls and spherical uv for others)");
 	scenePtr = std::make_shared<Scene> ();
 	scenePtr->setBackgroundColor (glm::vec3 (0.1f, 0.5f, 0.95f));
@@ -233,7 +244,6 @@ void initScene1 () {
 	scenePtr->addMesh(killerooMeshPtr);
 	scenePtr->addMesh(planMeshPtr);
 
-	
 	// ### Textures
 	float K_ = 1.0;
 	float a_ = 0.1;
@@ -358,6 +368,7 @@ void initScene1 () {
 }
 
 void initScene2() {
+	Console::print("init scene 2");
 	Console::print("Scene2 (Ray tracing should be activated) : texture(spherical uv) / surface / solid  ");
 	scenePtr = std::make_shared<Scene>();
 	scenePtr->setBackgroundColor(glm::vec3(0.1f, 0.5f, 0.95f));
@@ -527,6 +538,7 @@ void initScene2() {
 }
 
 void initScene3() {
+	Console::print("init scene 3");
 	Console::print("Scene3 (Ray tracing should be activated) : albedo / roughness / metalicness  ");
 	scenePtr = std::make_shared<Scene>();
 	scenePtr->setBackgroundColor(glm::vec3(0.1f, 0.5f, 0.95f));
@@ -650,11 +662,16 @@ void initScene3() {
 	std::cout << "meshscale " << meshScale << std::endl;
 }
 
-void init () {
+void init (int scene) {
 	initGLFW (); // Windowing system
 	if (!gladLoadGLLoader ((GLADloadproc)glfwGetProcAddress)) // Load extensions for modern OpenGL
 		exitOnCriticalError ("[Failed to initialize OpenGL context]");
-	initScene1(); // Actual scene to render
+	if (scene == 0)
+		initScene1();
+	else if (scene == 1)
+		initScene2();
+	else if (scene == 2)
+		initScene3();
 	rasterizerPtr = make_shared<Rasterizer>();
 	rasterizerPtr->init (basePath, scenePtr); // Mut be called before creating the scene, to generate an OpenGL context and allow mesh VBOs
 	rayTracerPtr = make_shared<RayTracer>();
@@ -711,13 +728,20 @@ void parseCommandLine (int argc, char ** argv) {
 }
 
 int main (int argc, char ** argv) {
+	printHelp();
 	parseCommandLine (argc, argv);
-	init (); 
+	init (current_scene);
 	while (!glfwWindowShouldClose (windowPtr)) {
 		update (static_cast<float> (glfwGetTime ()));
 		render ();
 		glfwSwapBuffers (windowPtr);
 		glfwPollEvents ();
+		if (swap_scene) {
+			clear();
+			current_scene = (current_scene + 1) % 3;
+			init(current_scene);
+			swap_scene = false;
+		}
 	}
 	clear ();
 	Console::print ("Quit");
